@@ -1,14 +1,37 @@
+// frontend/src/lib/api.js
 import axios from 'axios'
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
-export const api = axios.create({ baseURL: API_URL + '/api' })
-api.interceptors.request.use(cfg => {
-  const t = localStorage.getItem('messa_token')
-  if (t) cfg.headers.Authorization = 'Bearer ' + t
-  return cfg
+import { toast } from 'sonner'
+
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
+  timeout: 30000,
 })
-export const uploadFile = async (file) => {
-  const fd = new FormData(); fd.append('file', file)
-  const { data } = await api.post('/upload', fd, { headers: {'Content-Type':'multipart/form-data'}})
-  return data
-}
-export const API_BASE = API_URL
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('messa_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    const status = err.response?.status
+    const message = err.response?.data?.error || err.message || 'Something went wrong'
+
+    if (status === 401) {
+      localStorage.removeItem('messa_token')
+      window.location.href = '/auth'
+    } else if (status === 403) {
+      toast.error('You don\'t have permission to do this')
+    } else if (status === 429) {
+      toast.error('Too many requests. Please slow down.')
+    } else if (status >= 500) {
+      toast.error('Server error. Please try again.')
+    }
+
+    return Promise.reject(err)
+  }
+)
+
+export default api
