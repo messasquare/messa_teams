@@ -4,17 +4,17 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import useAuthStore from './store/auth'
 import Layout from './components/Layout'
+import LoadingScreen from './components/LoadingScreen'
 import AuthPage from './pages/AuthPage'
 import ChatPage from './pages/ChatPage'
 import TasksPage from './pages/TasksPage'
 import MeetingsPage from './pages/MeetingsPage'
 import AnnouncementsPage from './pages/AnnouncementsPage'
 import AdminPage from './pages/AdminPage'
-import LoadingScreen from './components/LoadingScreen'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuthStore()
-  if (loading) return <LoadingScreen />
+  if (loading) return <LoadingScreen message="Signing you in..." />
   if (!user) return <Navigate to="/auth" replace />
   return children
 }
@@ -38,22 +38,37 @@ export default function App() {
       <Toaster
         theme="dark"
         position="top-right"
+        richColors
+        closeButton
+        duration={3500}
         toastOptions={{
           style: {
             background: '#141414',
             border: '1px solid #2e2e2e',
             color: '#fff',
+            fontSize: '13px',
+            fontWeight: 500,
           },
+          className: 'messa-toast',
         }}
-        richColors
       />
       <Routes>
-        <Route path="/auth" element={
-          <PublicRoute><AuthPage /></PublicRoute>
-        } />
-        <Route path="/" element={
-          <ProtectedRoute><Layout /></ProtectedRoute>
-        }>
+        <Route
+          path="/auth"
+          element={
+            <PublicRoute>
+              <AuthPage />
+            </PublicRoute>
+          }
+        />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <Layout />
+            </ProtectedRoute>
+          }
+        >
           <Route index element={<Navigate to="/chat" replace />} />
           <Route path="chat" element={<ChatPage />} />
           <Route path="tasks" element={<TasksPage />} />

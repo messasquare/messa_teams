@@ -1,16 +1,15 @@
 // frontend/src/components/chat/VoiceRecorder.jsx
 import { useState, useRef, useEffect } from 'react'
-import { Mic, Square, Send, Trash2, Play, Pause } from 'lucide-react'
+import { Square, Send, Trash2, Play, Pause } from 'lucide-react'
 import { toast } from 'sonner'
-import { cn } from '../../lib/utils'
 
 export default function VoiceRecorder({ onSend, onCancel }) {
   const [state, setState] = useState('idle') // idle | recording | recorded | playing
   const [duration, setDuration] = useState(0)
-  const [currentTime, setCurrentTime] = useState(0)
   const [audioUrl, setAudioUrl] = useState(null)
   const [audioBlob, setAudioBlob] = useState(null)
-  const [bars, setBars] = useState(Array(30).fill(4))
+  const [bars, setBars] = useState(Array(24).fill(4))
+  const [playbackTime, setPlaybackTime] = useState(0)
 
   const mediaRef = useRef(null)
   const audioRef = useRef(null)
@@ -28,7 +27,8 @@ export default function VoiceRecorder({ onSend, onCancel }) {
   const cleanup = () => {
     clearInterval(timerRef.current)
     cancelAnimationFrame(animRef.current)
-    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    audioRef.current?.pause()
   }
 
   const startRecording = async () => {
@@ -36,52 +36,57 @@ export default function VoiceRecorder({ onSend, onCancel }) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
 
-      const ctx = new AudioContext()
+      const ctx = new (window.AudioContext || window.webkitAudioContext)()
       const src = ctx.createMediaStreamSource(stream)
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 64
       src.connect(analyser)
       analyserRef.current = analyser
 
-      const mr = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg'
-      })
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/ogg')
+        ? 'audio/ogg'
+        : 'audio/mp4'
+
+      const mr = new MediaRecorder(stream, { mimeType })
       mediaRef.current = mr
       chunksRef.current = []
 
-      mr.ondataavailable = e => e.data.size > 0 && chunksRef.current.push(e.data)
+      mr.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data)
       mr.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: mr.mimeType })
+        const blob = new Blob(chunksRef.current, { type: mimeType })
         const url = URL.createObjectURL(blob)
         setAudioBlob(blob)
         setAudioUrl(url)
         setState('recorded')
       }
 
-      mr.start(100)
+      mr.start(200)
       setState('recording')
 
       let secs = 0
       timerRef.current = setInterval(() => {
         secs++
         setDuration(secs)
-        if (secs >= 120) stopRecording()
+        if (secs >= 180) stopRecording() // Max 3 min
       }, 1000)
 
-      // Visualize
       const draw = () => {
         const data = new Uint8Array(analyser.frequencyBinCount)
         analyser.getByteFrequencyData(data)
-        const newBars = Array(30).fill(0).map((_, i) => {
-          const v = data[Math.floor(i * data.length / 30)] || 0
-          return Math.max(4, (v / 255) * 48)
-        })
+        const newBars = Array(24)
+          .fill(0)
+          .map((_, i) => {
+            const v = data[Math.floor((i * data.length) / 24)] || 0
+            return Math.max(4, (v / 255) * 40)
+          })
         setBars(newBars)
         animRef.current = requestAnimationFrame(draw)
       }
       draw()
     } catch (err) {
-      toast.error('Microphone access denied')
+      toast.error('Microphone access denied. Please allow microphone permissions.')
       onCancel()
     }
   }
@@ -89,7 +94,7 @@ export default function VoiceRecorder({ onSend, onCancel }) {
   const stopRecording = () => {
     clearInterval(timerRef.current)
     cancelAnimationFrame(animRef.current)
-    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current?.getTracks().forEach((t) => t.stop())
     if (mediaRef.current?.state === 'recording') {
       mediaRef.current.stop()
     }
@@ -101,12 +106,12 @@ export default function VoiceRecorder({ onSend, onCancel }) {
       audioRef.current.pause()
       setState('recorded')
     } else {
-      audioRef.current.play()
+      audioRef.current.play().catch(() => {})
       setState('playing')
     }
   }
 
-  const handleSend = async () => {
+  const handleSend = () => {
     if (!audioBlob) return
     onSend(audioBlob, duration)
   }
@@ -117,26 +122,30 @@ export default function VoiceRecorder({ onSend, onCancel }) {
     onCancel()
   }
 
-  const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+  const fmt = (s) => {
+    const t = Math.floor(s || 0)
+    return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
+  }
 
   return (
-    <div className="flex items-center gap-3 bg-muted rounded-2xl px-4 py-3 border border-border">
-      {/* Discard */}
-      <button onClick={handleDiscard} className="text-text-muted hover:text-messa-red transition-colors">
-        <Trash2 size={18} />
+    <div className="flex items-center gap-3 bg-muted rounded-2xl px-3 py-2 border border-border animate-slide-up">
+      <button
+        onClick={handleDiscard}
+        className="w-9 h-9 rounded-full hover:bg-messa-red/20 flex items-center justify-center text-text-muted hover:text-messa-red transition-all"
+      >
+        <Trash2 size={16} />
       </button>
 
-      {/* Waveform / Controls */}
-      <div className="flex-1 flex items-center gap-3">
+      <div className="flex-1 flex items-center gap-2">
         {state === 'recording' ? (
           <>
-            <div className="w-2 h-2 bg-messa-red rounded-full animate-recording-pulse flex-shrink-0" />
-            <div className="flex items-end gap-[2px] h-12 flex-1">
+            <div className="w-2 h-2 bg-messa-red rounded-full" style={{ animation: 'recordingPulse 1.5s infinite' }} />
+            <div className="flex items-end gap-[3px] h-10 flex-1 justify-center">
               {bars.map((h, i) => (
                 <div
                   key={i}
-                  className="bg-messa-red rounded-full flex-1 transition-all duration-75"
-                  style={{ height: h }}
+                  className="bg-messa-red rounded-full flex-1 max-w-[3px] transition-all duration-75"
+                  style={{ height: `${h}px` }}
                 />
               ))}
             </div>
@@ -146,51 +155,44 @@ export default function VoiceRecorder({ onSend, onCancel }) {
           <>
             <button
               onClick={togglePlay}
-              className="w-8 h-8 bg-messa-red rounded-full flex items-center justify-center flex-shrink-0"
+              className="w-9 h-9 bg-messa-red rounded-full flex items-center justify-center flex-shrink-0"
             >
-              {state === 'playing' ? <Pause size={14} /> : <Play size={14} />}
+              {state === 'playing' ? <Pause size={14} fill="white" /> : <Play size={14} fill="white" className="ml-0.5" />}
             </button>
-            <div className="flex-1">
-              <div className="flex items-end gap-[2px] h-8">
-                {Array(30).fill(0).map((_, i) => (
-                  <div
-                    key={i}
-                    className="bg-muted-2 rounded-full flex-1"
-                    style={{ height: Math.random() * 24 + 4 }}
-                  />
-                ))}
+            <div className="flex-1 flex items-center gap-2">
+              <div className="flex items-end gap-[3px] h-8 flex-1 justify-center">
+                {Array(24)
+                  .fill(0)
+                  .map((_, i) => {
+                    const active = duration && playbackTime / duration > i / 24
+                    return (
+                      <div
+                        key={i}
+                        className={`rounded-full flex-1 max-w-[3px] transition-colors ${active ? 'bg-messa-red' : 'bg-border-light'}`}
+                        style={{ height: `${8 + Math.sin(i * 0.5) * 12}px` }}
+                      />
+                    )
+                  })}
               </div>
-              <input
-                type="range"
-                min={0}
-                max={duration || 1}
-                value={currentTime}
-                onChange={e => {
-                  if (audioRef.current) audioRef.current.currentTime = e.target.value
-                  setCurrentTime(Number(e.target.value))
-                }}
-                className="w-full mt-1"
-              />
+              <span className="text-xs font-mono text-text-secondary">{fmt(duration)}</span>
             </div>
-            <span className="text-text-secondary text-xs font-mono">{fmt(duration)}</span>
           </>
         )}
       </div>
 
-      {/* Record Stop / Send */}
       {state === 'recording' ? (
         <button
           onClick={stopRecording}
-          className="w-10 h-10 bg-messa-red rounded-full flex items-center justify-center"
+          className="w-10 h-10 bg-messa-red hover:bg-messa-red-dark rounded-full flex items-center justify-center transition-colors active:scale-95"
         >
-          <Square size={16} />
+          <Square size={14} fill="white" />
         </button>
       ) : (
         <button
           onClick={handleSend}
-          className="w-10 h-10 bg-messa-red rounded-full flex items-center justify-center"
+          className="w-10 h-10 bg-messa-red hover:bg-messa-red-dark rounded-full flex items-center justify-center transition-colors active:scale-95"
         >
-          <Send size={16} />
+          <Send size={16} className="text-white" />
         </button>
       )}
 
@@ -198,8 +200,11 @@ export default function VoiceRecorder({ onSend, onCancel }) {
         <audio
           ref={audioRef}
           src={audioUrl}
-          onTimeUpdate={e => setCurrentTime(Math.floor(e.target.currentTime))}
-          onEnded={() => setState('recorded')}
+          onTimeUpdate={(e) => setPlaybackTime(e.target.currentTime)}
+          onEnded={() => {
+            setState('recorded')
+            setPlaybackTime(0)
+          }}
           className="hidden"
         />
       )}

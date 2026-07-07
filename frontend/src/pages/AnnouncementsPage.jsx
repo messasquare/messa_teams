@@ -1,76 +1,62 @@
 // frontend/src/pages/AnnouncementsPage.jsx
-import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useState, useEffect, useCallback, useMemo, memo } from 'react'
 import { toast } from 'sonner'
-import {
-  Megaphone, Plus, X, Loader, Pin, Search, Bell, BellOff
-} from 'lucide-react'
-import api from '../lib/api'
+import { Megaphone, Plus, X, Loader, Search } from 'lucide-react'
+import { announcementsAPI } from '../lib/api'
 import useAuthStore from '../store/auth'
 import Avatar from '../components/Avatar'
-import { cn, formatRelative, getRoleBadgeColor, getRoleLabel } from '../lib/utils'
+import { cn, formatRelative, getRoleBadgeColor, getRoleLabel, linkify } from '../lib/utils'
 
-function AnnouncementCard({ ann }) {
+// ─── Announcement Card ───
+const AnnouncementCard = memo(function AnnouncementCard({ ann }) {
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="card p-5 hover:border-messa-red/20 transition-all"
-    >
-      <div className="flex items-start gap-4">
+    <div className="card card-hover p-5 transition-all">
+      <div className="flex items-start gap-3">
         <Avatar name={ann.author_name} size="md" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="font-semibold text-white">{ann.author_name}</span>
-            <span className={cn(
-              'text-xs px-2 py-0.5 rounded-md border font-medium',
-              getRoleBadgeColor(ann.author_role)
-            )}>
+            <span className={cn('text-[10px] px-1.5 py-0.5 rounded border font-semibold uppercase tracking-wider', getRoleBadgeColor(ann.author_role))}>
               {getRoleLabel(ann.author_role)}
             </span>
-            <span className="text-xs text-text-muted ml-auto">
-              {formatRelative(ann.created_at)}
-            </span>
+            <span className="text-xs text-text-muted ml-auto">{formatRelative(ann.created_at)}</span>
           </div>
 
-          {ann.title && (
-            <h3 className="text-base font-semibold text-white mb-2">{ann.title}</h3>
-          )}
+          {ann.title && <h3 className="text-base font-semibold text-white mb-2">{ann.title}</h3>}
 
-          <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">
-            {ann.content || ann.text}
-          </p>
+          <p
+            className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap"
+            dangerouslySetInnerHTML={{ __html: linkify(ann.content || ann.text || '') }}
+          />
 
           {ann.attachments?.map((att, i) => (
-            <a
-              key={i}
-              href={att.url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 mt-3 text-sm text-messa-red hover:text-messa-red-light"
-            >
+            <a key={i} href={att.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 mt-3 text-sm text-messa-red hover:text-messa-red-light hover:underline">
               📎 {att.name || 'Attachment'}
             </a>
           ))}
         </div>
       </div>
-    </motion.div>
+    </div>
   )
-}
+})
 
+// ─── New Announcement Modal ───
 function NewAnnouncementModal({ onClose, onCreated }) {
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({ title: '', content: '' })
 
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
-
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!form.content.trim()) { toast.error('Content required'); return }
+    if (!form.content.trim()) {
+      toast.error('Content is required')
+      return
+    }
     setLoading(true)
     try {
-      const res = await api.post('/api/announcements', form)
+      const res = await announcementsAPI.create({
+        title: form.title.trim(),
+        content: form.content.trim(),
+      })
       onCreated(res.data)
       toast.success('Announcement posted!')
       onClose()
@@ -82,56 +68,64 @@ function NewAnnouncementModal({ onClose, onCreated }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="modal-content p-6"
-      >
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal-content p-6">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-white">New Announcement</h2>
-          <button onClick={onClose} className="btn-icon"><X size={18} /></button>
+          <div>
+            <h2 className="text-xl font-bold text-white">New Announcement</h2>
+            <p className="text-xs text-text-muted mt-0.5">Broadcast to the entire team</p>
+          </div>
+          <button onClick={onClose} className="btn-icon">
+            <X size={18} />
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="text-xs text-text-muted font-medium mb-1.5 block">Title (optional)</label>
+            <label className="text-xs text-text-muted font-medium mb-1.5 block uppercase tracking-wider">Title</label>
             <input
               className="input-base"
-              placeholder="Announcement title..."
+              placeholder="Announcement title (optional)"
               value={form.title}
-              onChange={e => set('title', e.target.value)}
+              onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
               autoFocus
+              maxLength={120}
             />
           </div>
 
           <div>
-            <label className="text-xs text-text-muted font-medium mb-1.5 block">Message *</label>
+            <label className="text-xs text-text-muted font-medium mb-1.5 block uppercase tracking-wider">Message *</label>
             <textarea
-              className="input-base resize-none"
-              rows={5}
-              placeholder="Write your announcement..."
+              className="input-base"
+              rows={6}
+              placeholder="What do you want to announce?"
               value={form.content}
-              onChange={e => set('content', e.target.value)}
+              onChange={(e) => setForm((p) => ({ ...p, content: e.target.value }))}
               required
+              maxLength={2000}
             />
+            <p className="text-[10px] text-text-muted mt-1">{form.content.length}/2000 characters</p>
           </div>
 
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="btn-ghost flex-1">Cancel</button>
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">
+              Cancel
+            </button>
             <button type="submit" disabled={loading} className="btn-primary flex-1">
-              {loading ? <Loader size={16} className="animate-spin" /> : (
-                <><Megaphone size={15} /> Post Announcement</>
+              {loading ? <div className="spinner" /> : (
+                <>
+                  <Megaphone size={15} /> Post
+                </>
               )}
             </button>
           </div>
         </form>
-      </motion.div>
+      </div>
     </div>
   )
 }
 
+// ─── MAIN PAGE ───
 export default function AnnouncementsPage() {
   const { user } = useAuthStore()
   const [announcements, setAnnouncements] = useState([])
@@ -142,30 +136,38 @@ export default function AnnouncementsPage() {
   const canCreate = ['founder', 'co_founder', 'core_team'].includes(user?.role)
 
   useEffect(() => {
+    let mounted = true
+    const load = async () => {
+      setLoading(true)
+      try {
+        const res = await announcementsAPI.list()
+        if (mounted) setAnnouncements(res.data || [])
+      } catch {
+        if (mounted) toast.error('Failed to load announcements')
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    }
     load()
+    return () => {
+      mounted = false
+    }
   }, [])
 
-  const load = async () => {
-    setLoading(true)
-    try {
-      const res = await api.get('/api/announcements')
-      setAnnouncements(res.data || [])
-    } catch {
-      toast.error('Failed to load announcements')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const filtered = announcements.filter(a =>
-    !search ||
-    a.title?.toLowerCase().includes(search.toLowerCase()) ||
-    a.content?.toLowerCase().includes(search.toLowerCase())
+  const filtered = useMemo(
+    () =>
+      announcements.filter(
+        (a) =>
+          !search ||
+          a.title?.toLowerCase().includes(search.toLowerCase()) ||
+          a.content?.toLowerCase().includes(search.toLowerCase())
+      ),
+    [announcements, search]
   )
 
   const AnnSkeleton = () => (
     <div className="card p-5">
-      <div className="flex gap-4">
+      <div className="flex gap-3">
         <div className="skeleton w-10 h-10 rounded-full flex-shrink-0" />
         <div className="flex-1 space-y-2">
           <div className="skeleton h-3 w-32 rounded" />
@@ -179,11 +181,10 @@ export default function AnnouncementsPage() {
 
   return (
     <div className="h-full flex flex-col bg-dark overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center gap-4 px-6 py-4 border-b border-border bg-card flex-shrink-0">
+      <div className="flex items-center gap-4 px-4 md:px-6 py-4 border-b border-border bg-card flex-shrink-0">
         <div>
           <h1 className="text-xl font-bold text-white">Announcements</h1>
-          <p className="text-xs text-text-muted">Team-wide broadcasts</p>
+          <p className="text-xs text-text-muted">{announcements.length} total posts</p>
         </div>
 
         <div className="flex-1 max-w-sm">
@@ -193,7 +194,7 @@ export default function AnnouncementsPage() {
               className="input-base pl-9 text-sm"
               placeholder="Search announcements..."
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={(e) => setSearch(e.target.value)}
             />
           </div>
         </div>
@@ -206,11 +207,14 @@ export default function AnnouncementsPage() {
         )}
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6">
         {loading ? (
           <div className="max-w-3xl mx-auto space-y-4">
-            {Array(3).fill(0).map((_, i) => <AnnSkeleton key={i} />)}
+            {Array(3)
+              .fill(0)
+              .map((_, i) => (
+                <AnnSkeleton key={i} />
+              ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-4">
@@ -218,12 +222,12 @@ export default function AnnouncementsPage() {
               <Megaphone size={36} className="text-text-muted" />
             </div>
             <div className="text-center">
-              <h3 className="font-semibold text-white mb-1">No announcements</h3>
+              <h3 className="font-semibold text-white mb-1">{search ? 'No results' : 'No announcements'}</h3>
               <p className="text-sm text-text-muted">
-                {canCreate ? 'Post your first announcement' : 'Announcements will appear here'}
+                {search ? 'Try a different search' : canCreate ? 'Post your first announcement' : 'Announcements will appear here'}
               </p>
             </div>
-            {canCreate && (
+            {canCreate && !search && (
               <button onClick={() => setShowNew(true)} className="btn-primary">
                 <Plus size={16} /> Post Announcement
               </button>
@@ -231,21 +235,14 @@ export default function AnnouncementsPage() {
           </div>
         ) : (
           <div className="max-w-3xl mx-auto space-y-4">
-            {filtered.map(ann => (
+            {filtered.map((ann) => (
               <AnnouncementCard key={ann._id} ann={ann} />
             ))}
           </div>
         )}
       </div>
 
-      <AnimatePresence>
-        {showNew && (
-          <NewAnnouncementModal
-            onClose={() => setShowNew(false)}
-            onCreated={(ann) => setAnnouncements(prev => [ann, ...prev])}
-          />
-        )}
-      </AnimatePresence>
+      {showNew && <NewAnnouncementModal onClose={() => setShowNew(false)} onCreated={(a) => setAnnouncements((prev) => [a, ...prev])} />}
     </div>
   )
 }

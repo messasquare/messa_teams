@@ -1,62 +1,56 @@
 // frontend/src/pages/MeetingsPage.jsx
-import { useState, useEffect, useRef } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useState, useEffect, useCallback, useMemo, memo } from 'react'
 import { toast } from 'sonner'
 import {
-  Video, Plus, X, Calendar, Clock, Users, ExternalLink,
-  Loader, Link, Copy, Maximize2, Minimize2, Search
+  Video, Plus, X, Calendar, Clock, ExternalLink, Loader,
+  Copy, Maximize2, Minimize2, Search, PhoneOff,
 } from 'lucide-react'
-import api from '../lib/api'
+import { meetingsAPI } from '../lib/api'
 import useAuthStore from '../store/auth'
-import { cn, formatDate, formatTime, getRoleLabel } from '../lib/utils'
-import Avatar from '../components/Avatar'
-import { format } from 'date-fns'
+import { cn } from '../lib/utils'
+import { format, isPast, isFuture, isToday } from 'date-fns'
 
-function JitsiMeet({ url, onClose }) {
-  const iframeRef = useRef(null)
+// ─── Embedded Jitsi ───
+function JitsiEmbedded({ url, title, onClose }) {
   const [fullscreen, setFullscreen] = useState(false)
-
-  const roomName = url?.split('/').pop()
+  const roomName = url?.split('/').pop() || 'meeting'
 
   return (
-    <div className={cn(
-      'fixed z-50 bg-dark border border-border shadow-modal',
-      fullscreen
-        ? 'inset-0'
-        : 'bottom-4 right-4 w-[640px] h-[480px] rounded-2xl overflow-hidden'
-    )}>
-      {/* Controls */}
-      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between
-                      px-4 py-2 bg-gradient-to-b from-black/80 to-transparent">
-        <div className="flex items-center gap-2">
+    <div
+      className={cn(
+        'fixed z-[60] bg-black border border-border shadow-modal transition-all',
+        fullscreen ? 'inset-0' : 'bottom-4 right-4 w-[720px] h-[540px] rounded-2xl overflow-hidden max-w-[calc(100vw-2rem)] max-h-[calc(100vh-2rem)]'
+      )}
+    >
+      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-2.5 bg-gradient-to-b from-black/90 to-transparent pointer-events-none">
+        <div className="flex items-center gap-2 pointer-events-auto">
           <div className="w-2 h-2 bg-messa-red rounded-full animate-pulse" />
-          <span className="text-white text-sm font-medium">Live Meeting</span>
-          <span className="text-text-muted text-xs">· {roomName}</span>
+          <span className="text-white text-sm font-semibold truncate max-w-[300px]">{title || 'Live Meeting'}</span>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setFullscreen(!fullscreen)}
-            className="btn-icon"
-          >
-            {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+        <div className="flex items-center gap-1 pointer-events-auto">
+          <a href={url} target="_blank" rel="noreferrer" className="btn-icon-sm bg-black/50 backdrop-blur-md text-white hover:bg-black/70" title="Open in new tab">
+            <ExternalLink size={14} />
+          </a>
+          <button onClick={() => setFullscreen(!fullscreen)} className="btn-icon-sm bg-black/50 backdrop-blur-md text-white hover:bg-black/70">
+            {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
-          <button onClick={onClose} className="btn-icon">
-            <X size={15} />
+          <button onClick={onClose} className="btn-icon-sm bg-messa-red text-white hover:bg-messa-red-dark">
+            <PhoneOff size={14} />
           </button>
         </div>
       </div>
 
       <iframe
-        ref={iframeRef}
         src={url}
-        allow="camera; microphone; display-capture; autoplay"
+        allow="camera; microphone; display-capture; autoplay; clipboard-write"
         className="w-full h-full border-0"
-        title="Jitsi Meeting"
+        title={title || 'Jitsi Meeting'}
       />
     </div>
   )
 }
 
+// ─── New Meeting Modal ───
 function NewMeetingModal({ onClose, onCreated }) {
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({
@@ -66,16 +60,21 @@ function NewMeetingModal({ onClose, onCreated }) {
     duration: 60,
   })
 
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
-
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!form.title.trim()) { toast.error('Title required'); return }
+    if (!form.title.trim()) {
+      toast.error('Meeting title required')
+      return
+    }
     setLoading(true)
     try {
-      const res = await api.post('/api/meetings', form)
+      const res = await meetingsAPI.create({
+        ...form,
+        title: form.title.trim(),
+        description: form.description.trim(),
+      })
       onCreated(res.data)
-      toast.success('Meeting scheduled!')
+      toast.success('Meeting created!')
       onClose()
     } catch {
       toast.error('Failed to create meeting')
@@ -84,129 +83,132 @@ function NewMeetingModal({ onClose, onCreated }) {
     }
   }
 
+  const startNow = () => {
+    const now = new Date()
+    const iso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+    setForm((p) => ({ ...p, scheduled_at: iso }))
+  }
+
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="modal-content p-6"
-      >
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal-content p-6">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h2 className="text-xl font-bold text-white">Schedule Meeting</h2>
-            <p className="text-sm text-text-muted">Powered by Jitsi Meet</p>
+            <h2 className="text-xl font-bold text-white">New Meeting</h2>
+            <p className="text-xs text-text-muted mt-0.5">Powered by Jitsi Meet</p>
           </div>
-          <button onClick={onClose} className="btn-icon"><X size={18} /></button>
+          <button onClick={onClose} className="btn-icon">
+            <X size={18} />
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="text-xs text-text-muted font-medium mb-1.5 block">Meeting Title *</label>
+            <label className="text-xs text-text-muted font-medium mb-1.5 block uppercase tracking-wider">Meeting Title *</label>
             <input
               className="input-base"
-              placeholder="Team standup, Sprint review..."
+              placeholder="Team standup, Sprint planning..."
               value={form.title}
-              onChange={e => set('title', e.target.value)}
+              onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
               required
               autoFocus
+              maxLength={100}
             />
           </div>
 
           <div>
-            <label className="text-xs text-text-muted font-medium mb-1.5 block">Description</label>
+            <label className="text-xs text-text-muted font-medium mb-1.5 block uppercase tracking-wider">Agenda</label>
             <textarea
-              className="input-base resize-none"
+              className="input-base"
               rows={2}
-              placeholder="Meeting agenda..."
+              placeholder="What will be discussed..."
               value={form.description}
-              onChange={e => set('description', e.target.value)}
+              onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+              maxLength={300}
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-text-muted font-medium mb-1.5 block">Date & Time</label>
+              <label className="text-xs text-text-muted font-medium mb-1.5 block uppercase tracking-wider">Date & Time</label>
               <input
                 type="datetime-local"
                 className="input-base"
                 value={form.scheduled_at}
-                onChange={e => set('scheduled_at', e.target.value)}
+                onChange={(e) => setForm((p) => ({ ...p, scheduled_at: e.target.value }))}
               />
+              <button type="button" onClick={startNow} className="text-xs text-messa-red hover:underline mt-1">
+                Start now →
+              </button>
             </div>
             <div>
-              <label className="text-xs text-text-muted font-medium mb-1.5 block">Duration (min)</label>
-              <select
-                className="input-base"
-                value={form.duration}
-                onChange={e => set('duration', Number(e.target.value))}
-              >
-                {[15, 30, 45, 60, 90, 120].map(d => (
-                  <option key={d} value={d}>{d} minutes</option>
+              <label className="text-xs text-text-muted font-medium mb-1.5 block uppercase tracking-wider">Duration</label>
+              <select className="input-base" value={form.duration} onChange={(e) => setForm((p) => ({ ...p, duration: Number(e.target.value) }))}>
+                {[15, 30, 45, 60, 90, 120].map((d) => (
+                  <option key={d} value={d}>
+                    {d} minutes
+                  </option>
                 ))}
               </select>
             </div>
           </div>
 
-          <div className="bg-muted/50 border border-border rounded-xl p-3">
-            <p className="text-xs text-text-muted">
-              🎥 A Jitsi Meet room will be automatically created. You can join directly in the app or open in a new tab.
-            </p>
+          <div className="bg-muted/50 border border-border rounded-xl p-3 flex items-start gap-2">
+            <Video size={14} className="text-messa-red mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-text-secondary leading-relaxed">A unique Jitsi Meet room will be created. Anyone with the link can join.</p>
           </div>
 
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="btn-ghost flex-1">Cancel</button>
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">
+              Cancel
+            </button>
             <button type="submit" disabled={loading} className="btn-primary flex-1">
-              {loading ? <Loader size={16} className="animate-spin" /> : 'Schedule Meeting'}
+              {loading ? <div className="spinner" /> : 'Create Meeting'}
             </button>
           </div>
         </form>
-      </motion.div>
+      </div>
     </div>
   )
 }
 
-function MeetingCard({ meeting, onJoin }) {
-  const { user } = useAuthStore()
-  const canCreate = ['founder', 'co_founder', 'core_team'].includes(user?.role)
-  const isPast = meeting.scheduled_at && new Date(meeting.scheduled_at) < new Date()
+// ─── Meeting Card ───
+const MeetingCard = memo(function MeetingCard({ meeting, onJoin }) {
+  const isPastMeeting = meeting.scheduled_at && isPast(new Date(meeting.scheduled_at))
+  const isTodayMeeting = meeting.scheduled_at && isToday(new Date(meeting.scheduled_at))
+  const isLive = isTodayMeeting && !isPastMeeting
 
   const copyLink = () => {
     navigator.clipboard.writeText(meeting.jitsi_url)
-    toast.success('Meeting link copied!')
+    toast.success('Link copied!')
   }
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="card p-4 hover:border-messa-red/30 transition-all"
-    >
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="flex items-start gap-3 flex-1 min-w-0">
-          <div className={cn(
-            'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0',
-            isPast ? 'bg-muted' : 'bg-messa-red/20'
-          )}>
-            <Video size={18} className={isPast ? 'text-text-muted' : 'text-messa-red'} />
-          </div>
-          <div className="flex-1 min-w-0">
+    <div className="card card-hover p-4 transition-all group">
+      <div className="flex items-start gap-3 mb-3">
+        <div
+          className={cn(
+            'w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 transition-all',
+            isPastMeeting ? 'bg-muted' : isLive ? 'bg-messa-red/20 shadow-glow-red' : 'bg-messa-red/10'
+          )}
+        >
+          <Video size={19} className={isPastMeeting ? 'text-text-muted' : 'text-messa-red'} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
             <h3 className="font-semibold text-white truncate">{meeting.title}</h3>
-            {meeting.description && (
-              <p className="text-xs text-text-muted mt-0.5 line-clamp-1">{meeting.description}</p>
+            {isLive && (
+              <span className="text-[9px] font-bold bg-messa-red/20 text-messa-red border border-messa-red/30 px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse">
+                Live
+              </span>
             )}
           </div>
+          {meeting.description && <p className="text-xs text-text-muted line-clamp-2 leading-relaxed">{meeting.description}</p>}
         </div>
-
-        {isPast && (
-          <span className="text-xs text-text-muted bg-muted px-2 py-1 rounded-lg flex-shrink-0">
-            Ended
-          </span>
-        )}
+        {isPastMeeting && <span className="text-[10px] text-text-muted bg-muted px-2 py-1 rounded flex-shrink-0 font-medium">Past</span>}
       </div>
 
-      <div className="flex items-center gap-4 text-xs text-text-muted mb-3">
+      <div className="flex items-center gap-3 text-xs text-text-secondary mb-3 flex-wrap">
         {meeting.scheduled_at && (
           <>
             <span className="flex items-center gap-1">
@@ -219,47 +221,26 @@ function MeetingCard({ meeting, onJoin }) {
             </span>
           </>
         )}
-        {meeting.duration && (
-          <span>{meeting.duration} min</span>
-        )}
+        {meeting.duration && <span className="text-text-muted">· {meeting.duration}min</span>}
       </div>
 
       <div className="flex items-center gap-2">
-        <button
-          onClick={() => onJoin(meeting.jitsi_url)}
-          className={cn(
-            'btn-primary flex-1 py-2 text-sm',
-            isPast && 'opacity-70'
-          )}
-        >
+        <button onClick={() => onJoin(meeting)} className={cn('btn-primary flex-1 py-2 text-sm', isPastMeeting && 'opacity-80')}>
           <Video size={14} />
-          {isPast ? 'Replay Room' : 'Join Meeting'}
+          {isPastMeeting ? 'Rejoin Room' : isLive ? 'Join Now' : 'Join'}
         </button>
-
-        <button onClick={copyLink} className="btn-icon border border-border" title="Copy link">
-          <Copy size={15} />
+        <button onClick={copyLink} className="btn-icon border border-border hover:border-messa-red/40" title="Copy link">
+          <Copy size={14} />
         </button>
-
-        <a
-          href={meeting.jitsi_url}
-          target="_blank"
-          rel="noreferrer"
-          className="btn-icon border border-border"
-          title="Open in new tab"
-        >
-          <ExternalLink size={15} />
+        <a href={meeting.jitsi_url} target="_blank" rel="noreferrer" className="btn-icon border border-border hover:border-messa-red/40" title="Open in new tab">
+          <ExternalLink size={14} />
         </a>
       </div>
-
-      {meeting.room_name && (
-        <p className="text-[10px] text-text-muted mt-2 font-mono truncate">
-          {meeting.room_name}
-        </p>
-      )}
-    </motion.div>
+    </div>
   )
-}
+})
 
+// ─── MAIN PAGE ───
 export default function MeetingsPage() {
   const { user } = useAuthStore()
   const [meetings, setMeetings] = useState([])
@@ -271,36 +252,50 @@ export default function MeetingsPage() {
   const canCreate = ['founder', 'co_founder', 'core_team'].includes(user?.role)
 
   useEffect(() => {
-    loadMeetings()
+    let mounted = true
+    const load = async () => {
+      setLoading(true)
+      try {
+        const res = await meetingsAPI.list()
+        if (mounted) setMeetings(res.data || [])
+      } catch {
+        if (mounted) toast.error('Failed to load meetings')
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      mounted = false
+    }
   }, [])
 
-  const loadMeetings = async () => {
-    setLoading(true)
-    try {
-      const res = await api.get('/api/meetings')
-      setMeetings(res.data || [])
-    } catch {
-      toast.error('Failed to load meetings')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const upcoming = meetings.filter(m =>
-    !m.scheduled_at || new Date(m.scheduled_at) >= new Date()
-  )
-  const past = meetings.filter(m =>
-    m.scheduled_at && new Date(m.scheduled_at) < new Date()
+  const filtered = useMemo(
+    () => meetings.filter((m) => !search || m.title?.toLowerCase().includes(search.toLowerCase())),
+    [meetings, search]
   )
 
-  const filtered = (list) => list.filter(m =>
-    m.title?.toLowerCase().includes(search.toLowerCase())
-  )
+  const { upcoming, past } = useMemo(() => {
+    const upcoming = []
+    const past = []
+    filtered.forEach((m) => {
+      if (!m.scheduled_at || isFuture(new Date(m.scheduled_at)) || isToday(new Date(m.scheduled_at))) {
+        upcoming.push(m)
+      } else {
+        past.push(m)
+      }
+    })
+    return { upcoming, past }
+  }, [filtered])
+
+  const handleJoin = useCallback((meeting) => {
+    setActiveJitsi(meeting)
+  }, [])
 
   const MeetingSkeleton = () => (
     <div className="card p-4 space-y-3">
       <div className="flex gap-3">
-        <div className="skeleton w-10 h-10 rounded-xl" />
+        <div className="skeleton w-11 h-11 rounded-xl" />
         <div className="flex-1 space-y-2">
           <div className="skeleton h-4 w-3/4 rounded" />
           <div className="skeleton h-3 w-1/2 rounded" />
@@ -312,11 +307,12 @@ export default function MeetingsPage() {
 
   return (
     <div className="h-full flex flex-col bg-dark overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center gap-4 px-6 py-4 border-b border-border bg-card flex-shrink-0">
+      <div className="flex items-center gap-4 px-4 md:px-6 py-4 border-b border-border bg-card flex-shrink-0">
         <div>
           <h1 className="text-xl font-bold text-white">Meetings</h1>
-          <p className="text-xs text-text-muted">{meetings.length} total · Jitsi Meet</p>
+          <p className="text-xs text-text-muted">
+            {meetings.length} total · {upcoming.length} upcoming
+          </p>
         </div>
 
         <div className="flex-1 max-w-xs">
@@ -326,7 +322,7 @@ export default function MeetingsPage() {
               className="input-base pl-9 text-sm"
               placeholder="Search meetings..."
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={(e) => setSearch(e.target.value)}
             />
           </div>
         </div>
@@ -334,16 +330,19 @@ export default function MeetingsPage() {
         {canCreate && (
           <button onClick={() => setShowNew(true)} className="btn-primary flex-shrink-0">
             <Plus size={16} />
-            Schedule
+            New Meeting
           </button>
         )}
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6">
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {Array(4).fill(0).map((_, i) => <MeetingSkeleton key={i} />)}
+            {Array(4)
+              .fill(0)
+              .map((_, i) => (
+                <MeetingSkeleton key={i} />
+              ))}
           </div>
         ) : meetings.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-4">
@@ -352,43 +351,39 @@ export default function MeetingsPage() {
             </div>
             <div className="text-center">
               <h3 className="font-semibold text-white mb-1">No meetings yet</h3>
-              <p className="text-sm text-text-muted">
-                {canCreate ? 'Schedule your first meeting' : 'Meetings will appear here'}
-              </p>
+              <p className="text-sm text-text-muted">{canCreate ? 'Create your first meeting' : 'Meetings will appear here'}</p>
             </div>
             {canCreate && (
               <button onClick={() => setShowNew(true)} className="btn-primary">
-                <Plus size={16} /> Schedule Meeting
+                <Plus size={16} /> Create Meeting
               </button>
             )}
           </div>
         ) : (
-          <div className="space-y-6">
-            {/* Upcoming */}
-            {filtered(upcoming).length > 0 && (
+          <div className="space-y-6 max-w-7xl mx-auto">
+            {upcoming.length > 0 && (
               <div>
-                <h2 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2 uppercase tracking-wider">
                   <span className="w-2 h-2 bg-messa-red rounded-full animate-pulse" />
-                  Upcoming ({filtered(upcoming).length})
+                  Upcoming ({upcoming.length})
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filtered(upcoming).map(m => (
-                    <MeetingCard key={m._id} meeting={m} onJoin={setActiveJitsi} />
+                  {upcoming.map((m) => (
+                    <MeetingCard key={m._id} meeting={m} onJoin={handleJoin} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Past */}
-            {filtered(past).length > 0 && (
+            {past.length > 0 && (
               <div>
-                <h2 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2">
-                  <Clock size={14} />
-                  Past Meetings ({filtered(past).length})
+                <h2 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-2 uppercase tracking-wider">
+                  <Clock size={13} />
+                  Past ({past.length})
                 </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 opacity-60">
-                  {filtered(past).map(m => (
-                    <MeetingCard key={m._id} meeting={m} onJoin={setActiveJitsi} />
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 opacity-70">
+                  {past.map((m) => (
+                    <MeetingCard key={m._id} meeting={m} onJoin={handleJoin} />
                   ))}
                 </div>
               </div>
@@ -397,22 +392,9 @@ export default function MeetingsPage() {
         )}
       </div>
 
-      {/* Jitsi Embedded */}
-      <AnimatePresence>
-        {activeJitsi && (
-          <JitsiMeet url={activeJitsi} onClose={() => setActiveJitsi(null)} />
-        )}
-      </AnimatePresence>
+      {activeJitsi && <JitsiEmbedded url={activeJitsi.jitsi_url} title={activeJitsi.title} onClose={() => setActiveJitsi(null)} />}
 
-      {/* New Meeting Modal */}
-      <AnimatePresence>
-        {showNew && (
-          <NewMeetingModal
-            onClose={() => setShowNew(false)}
-            onCreated={(m) => setMeetings(prev => [m, ...prev])}
-          />
-        )}
-      </AnimatePresence>
+      {showNew && <NewMeetingModal onClose={() => setShowNew(false)} onCreated={(m) => setMeetings((prev) => [m, ...prev])} />}
     </div>
   )
 }

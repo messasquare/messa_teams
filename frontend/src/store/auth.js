@@ -1,15 +1,17 @@
 // frontend/src/store/auth.js
 import { create } from 'zustand'
-import api from '../lib/api'
+import { authAPI } from '../lib/api'
 import { initSocket, disconnectSocket } from '../lib/socket'
+import { clearCache } from '../lib/api'
 
 const useAuthStore = create((set, get) => ({
   user: null,
   token: localStorage.getItem('messa_token'),
   loading: true,
-  onlineUsers: new Set(),
+  socketConnected: false,
 
   setUser: (user) => set({ user }),
+  setSocketConnected: (connected) => set({ socketConnected: connected }),
 
   init: async () => {
     const token = localStorage.getItem('messa_token')
@@ -18,12 +20,12 @@ const useAuthStore = create((set, get) => ({
       return
     }
     try {
-      const res = await api.get('/api/auth/me')
+      const res = await authAPI.me()
       set({ user: res.data, loading: false })
       initSocket(token)
       // Request notification permission
       if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission()
+        setTimeout(() => Notification.requestPermission(), 2000)
       }
     } catch {
       localStorage.removeItem('messa_token')
@@ -32,7 +34,7 @@ const useAuthStore = create((set, get) => ({
   },
 
   login: async (email, password) => {
-    const res = await api.post('/api/auth/login', { email, password })
+    const res = await authAPI.login(email, password)
     const { token, user } = res.data
     localStorage.setItem('messa_token', token)
     set({ token, user })
@@ -41,7 +43,7 @@ const useAuthStore = create((set, get) => ({
   },
 
   register: async (data) => {
-    const res = await api.post('/api/auth/register', data)
+    const res = await authAPI.register(data)
     if (res.data.token) {
       localStorage.setItem('messa_token', res.data.token)
       set({ token: res.data.token, user: res.data.user })
@@ -53,16 +55,9 @@ const useAuthStore = create((set, get) => ({
   logout: () => {
     localStorage.removeItem('messa_token')
     disconnectSocket()
+    clearCache()
     set({ user: null, token: null })
   },
-
-  updateOnlineUsers: (users) => set({ onlineUsers: new Set(users) }),
-  addOnlineUser: (uid) => set(s => ({ onlineUsers: new Set([...s.onlineUsers, uid]) })),
-  removeOnlineUser: (uid) => set(s => {
-    const next = new Set(s.onlineUsers)
-    next.delete(uid)
-    return { onlineUsers: next }
-  }),
 }))
 
 export default useAuthStore
